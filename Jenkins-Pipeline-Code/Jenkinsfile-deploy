@@ -4,8 +4,8 @@ pipeline {
     }
    
     environment {
-        ECR_REGION     = 'ap-south-1'      // ECR is in Mumbai
-        EKS_REGION     = 'us-west-2'       // EKS is in Oregon
+        ECR_REGION     = 'ap-south-1'
+        EKS_REGION     = 'ap-south-1'
         ECR_REGISTRY   = '242201297942.dkr.ecr.ap-south-1.amazonaws.com'
         FRONTEND_IMAGE = 'three-tier-frontend'
         BACKEND_IMAGE  = 'three-tier-backend'
@@ -52,9 +52,14 @@ pipeline {
        
         stage('Push to ECR') {
             steps {
-                withCredentials(credentials: 'aws-credentials', region: "${ECR_REGION}") {
+                withCredentials([[
+                    $class: 'AmazonWebServicesCredentialsBinding',
+                    credentialsId: 'aws-credentials',
+                    accessKeyVariable: 'AWS_ACCESS_KEY_ID',
+                    secretKeyVariable: 'AWS_SECRET_ACCESS_KEY'
+                ]]) {
                     sh '''
-                        echo "Logging into ECR (Mumbai)..."
+                        echo "Logging into ECR..."
                         aws ecr get-login-password --region ${ECR_REGION} | docker login --username AWS --password-stdin ${ECR_REGISTRY}
                        
                         echo "Pushing Frontend image..."
@@ -73,38 +78,44 @@ pipeline {
        
         stage('Deploy to EKS') {
             steps {
-                withAWS(credentials: 'aws-credentials', region: "${EKS_REGION}") {
-                    withCredentials([file(credentialsId: 'kubeconfig', variable: 'KUBECONFIG')]) {
-                        sh '''
-                            echo "Updating kubeconfig for EKS Oregon..."
-                            aws eks update-kubeconfig --region ${EKS_REGION} --name ${CLUSTER_NAME} --kubeconfig "${KUBECONFIG}"
+                withCredentials([[
+                    $class: 'AmazonWebServicesCredentialsBinding',
+                    credentialsId: 'aws-credentials',
+                    accessKeyVariable: 'AWS_ACCESS_KEY_ID',
+                    secretKeyVariable: 'AWS_SECRET_ACCESS_KEY'
+                ]]) {
+                    sh '''
+                        echo "Updating kubeconfig for EKS..."
+                        aws eks update-kubeconfig --region ${EKS_REGION} --name ${CLUSTER_NAME}
+                       
+                        echo "Deploying Frontend..."
+                        kubectl set image deployment/frontend frontend=${ECR_REGISTRY}/${FRONTEND_IMAGE}:${IMAGE_TAG} -n ${NAMESPACE}
                            
-                            echo "Deploying Frontend..."
-                            kubectl set image deployment/frontend frontend=${ECR_REGISTRY}/${FRONTEND_IMAGE}:${IMAGE_TAG} -n ${NAMESPACE}
-                               
-                            echo "Deploying Backend..."
-                            kubectl set image deployment/api api=${ECR_REGISTRY}/${BACKEND_IMAGE}:${IMAGE_TAG} -n ${NAMESPACE}
-                           
-                            echo "Waiting for rollout..."
-                            kubectl rollout status deployment/frontend -n ${NAMESPACE} --timeout=120s
-                            kubectl rollout status deployment/api -n ${NAMESPACE} --timeout=120s
-                        '''
-                    }
+                        echo "Deploying Backend..."
+                        kubectl set image deployment/api api=${ECR_REGISTRY}/${BACKEND_IMAGE}:${IMAGE_TAG} -n ${NAMESPACE}
+                       
+                        echo "Waiting for rollout..."
+                        kubectl rollout status deployment/frontend -n ${NAMESPACE} --timeout=120s
+                        kubectl rollout status deployment/api -n ${NAMESPACE} --timeout=120s
+                    '''
                 }
             }
         }
        
         stage('Verify Deployment') {
             steps {
-                withAWS(credentials: 'aws-credentials', region: "${EKS_REGION}") {
-                    withCredentials([file(credentialsId: 'kubeconfig', variable: 'KUBECONFIG')]) {
-                        sh '''
-                            echo "Verifying deployment..."
-                            kubectl get pods -n ${NAMESPACE} -o wide
-                            kubectl get services -n ${NAMESPACE}
-                            echo "Deployment verified successfully!"
-                        '''
-                    }
+                withCredentials([[
+                    $class: 'AmazonWebServicesCredentialsBinding',
+                    credentialsId: 'aws-credentials',
+                    accessKeyVariable: 'AWS_ACCESS_KEY_ID',
+                    secretKeyVariable: 'AWS_SECRET_ACCESS_KEY'
+                ]]) {
+                    sh '''
+                        echo "Verifying deployment..."
+                        kubectl get pods -n ${NAMESPACE} -o wide
+                        kubectl get services -n ${NAMESPACE}
+                        echo "Deployment verified successfully!"
+                    '''
                 }
             }
         }
