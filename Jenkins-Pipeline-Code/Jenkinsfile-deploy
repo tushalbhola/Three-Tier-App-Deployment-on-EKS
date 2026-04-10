@@ -2,136 +2,17 @@ pipeline {
     agent {
         label 'jenkins-agent'
     }
-   
+    
     environment {
-        ECR_REGION     = 'ap-south-1'
-        EKS_REGION     = 'ap-south-1'
-        ECR_REGISTRY   = '242201297942.dkr.ecr.ap-south-1.amazonaws.com'
-        FRONTEND_IMAGE = 'three-tier-frontend'
-        BACKEND_IMAGE  = 'three-tier-backend'
-        IMAGE_TAG      = "${BUILD_NUMBER}"
-        NAMESPACE      = 'project'
-        CLUSTER_NAME   = 'three-tier-cluster'
+        GIT_REPO = 'https://github.com/tushalbhola/Three-Tier-App-Deployment-on-EKS.git'
     }
-   
+    
     stages {
-       
         stage('Checkout') {
             steps {
                 echo "Checking out code..."
-                git branch: 'main', url: 'https://github.com/tushalbhola/TWSThreeTierAppChallenge.git'
+                git branch: 'main', url: "${GIT_REPO}"
             }
-        }
-       
-        stage('Build Docker Images') {
-            parallel {
-                stage('Build Frontend') {
-                    steps {
-                        dir('Application-Code/frontend') {
-                            sh '''
-                                echo "Building Frontend Image..."
-                                docker build -t ${FRONTEND_IMAGE}:${IMAGE_TAG} .
-                                docker tag ${FRONTEND_IMAGE}:${IMAGE_TAG} ${FRONTEND_IMAGE}:latest
-                            '''
-                        }
-                    }
-                }
-                stage('Build Backend') {
-                    steps {
-                        dir('Application-Code/backend') {
-                            sh '''
-                                echo "Building Backend Image..."
-                                docker build -t ${BACKEND_IMAGE}:${IMAGE_TAG} .
-                                docker tag ${BACKEND_IMAGE}:${IMAGE_TAG} ${BACKEND_IMAGE}:latest
-                            '''
-                        }
-                    }
-                }
-            }
-        }
-       
-        stage('Push to ECR') {
-            steps {
-                withCredentials([[
-                    $class: 'AmazonWebServicesCredentialsBinding',
-                    credentialsId: 'aws-credentials',
-                    accessKeyVariable: 'AWS_ACCESS_KEY_ID',
-                    secretKeyVariable: 'AWS_SECRET_ACCESS_KEY'
-                ]]) {
-                    sh '''
-                        echo "Logging into ECR..."
-                        aws ecr get-login-password --region ${ECR_REGION} | docker login --username AWS --password-stdin ${ECR_REGISTRY}
-                       
-                        echo "Pushing Frontend image..."
-                        docker tag ${FRONTEND_IMAGE}:${IMAGE_TAG} ${ECR_REGISTRY}/${FRONTEND_IMAGE}:${IMAGE_TAG}
-                        docker push ${ECR_REGISTRY}/${FRONTEND_IMAGE}:${IMAGE_TAG}
-                        docker push ${ECR_REGISTRY}/${FRONTEND_IMAGE}:latest
-                       
-                        echo "Pushing Backend image..."
-                        docker tag ${BACKEND_IMAGE}:${IMAGE_TAG} ${ECR_REGISTRY}/${BACKEND_IMAGE}:${IMAGE_TAG}
-                        docker push ${ECR_REGISTRY}/${BACKEND_IMAGE}:${IMAGE_TAG}
-                        docker push ${ECR_REGISTRY}/${BACKEND_IMAGE}:latest
-                    '''
-                }
-            }
-        }
-       
-        stage('Deploy to EKS') {
-            steps {
-                withCredentials([[
-                    $class: 'AmazonWebServicesCredentialsBinding',
-                    credentialsId: 'aws-credentials',
-                    accessKeyVariable: 'AWS_ACCESS_KEY_ID',
-                    secretKeyVariable: 'AWS_SECRET_ACCESS_KEY'
-                ]]) {
-                    sh '''
-                        echo "Updating kubeconfig for EKS..."
-                        aws eks update-kubeconfig --region ${EKS_REGION} --name ${CLUSTER_NAME}
-                       
-                        echo "Deploying Frontend..."
-                        kubectl set image deployment/frontend frontend=${ECR_REGISTRY}/${FRONTEND_IMAGE}:${IMAGE_TAG} -n ${NAMESPACE}
-                           
-                        echo "Deploying Backend..."
-                        kubectl set image deployment/api api=${ECR_REGISTRY}/${BACKEND_IMAGE}:${IMAGE_TAG} -n ${NAMESPACE}
-                       
-                        echo "Waiting for rollout..."
-                        kubectl rollout status deployment/frontend -n ${NAMESPACE} --timeout=120s
-                        kubectl rollout status deployment/api -n ${NAMESPACE} --timeout=120s
-                    '''
-                }
-            }
-        }
-       
-        stage('Verify Deployment') {
-            steps {
-                withCredentials([[
-                    $class: 'AmazonWebServicesCredentialsBinding',
-                    credentialsId: 'aws-credentials',
-                    accessKeyVariable: 'AWS_ACCESS_KEY_ID',
-                    secretKeyVariable: 'AWS_SECRET_ACCESS_KEY'
-                ]]) {
-                    sh '''
-                        echo "Verifying deployment..."
-                        kubectl get pods -n ${NAMESPACE} -o wide
-                        kubectl get services -n ${NAMESPACE}
-                        echo "Deployment verified successfully!"
-                    '''
-                }
-            }
-        }
-    }
-   
-    post {
-        success {
-            echo "Pipeline completed successfully! Build #${BUILD_NUMBER} deployed to EKS."
-        }
-        failure {
-            echo "Pipeline failed for Build #${BUILD_NUMBER}."
-        }
-        always {
-            echo "Cleaning up..."
-            sh 'docker system prune -af || true'
-            cleanWs()
         }
     }
 }
